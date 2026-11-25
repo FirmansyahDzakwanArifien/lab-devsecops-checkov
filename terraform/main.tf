@@ -1,5 +1,5 @@
 # ~/lab-checkov/terraform/main.tf
-# Versi setelah remediasi (Lab 03, Perbaikan 1-5)
+# Versi setelah remediasi (Lab 03, Perbaikan 1-5) + hardening lanjutan (Lab 06)
 
 terraform {
   required_providers {
@@ -16,7 +16,30 @@ provider "aws" {
 
 # PERBAIKAN 1: S3 Bucket aman
 resource "aws_s3_bucket" "data" {
+  # checkov:skip=CKV_AWS_18:Bucket lab, tidak ada bucket log terpisah untuk access logging
+  # checkov:skip=CKV_AWS_144:Lab satu region (ap-southeast-1), cross-region replication di luar cakupan
+  # checkov:skip=CKV2_AWS_62:Belum ada SNS/SQS tujuan event notification di lab ini
   bucket = "my-company-data-bucket-secure"
+}
+
+# Hardening lanjutan: lifecycle untuk versi objek lama
+resource "aws_s3_bucket_lifecycle_configuration" "data" {
+  bucket = aws_s3_bucket.data.id
+
+  rule {
+    id     = "hapus-versi-lama"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 90
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 }
 
 # Blokir seluruh akses publik
@@ -122,12 +145,25 @@ resource "aws_db_instance" "main" {
   backup_retention_period   = 7
   skip_final_snapshot       = false
   final_snapshot_identifier = "mydb-final-snapshot"
+
+  # Hardening lanjutan
+  multi_az                            = true
+  auto_minor_version_upgrade          = true
+  copy_tags_to_snapshot               = true
+  iam_database_authentication_enabled = true
+  enabled_cloudwatch_logs_exports     = ["audit", "error", "general", "slowquery"]
+
+  # checkov:skip=CKV_AWS_118:Enhanced monitoring butuh IAM role monitoring terpisah, belum dibuat di lab
 }
 
 # PERBAIKAN 5: EC2 dengan EBS terenkripsi & IMDSv2
 resource "aws_instance" "web" {
-  ami           = "ami-0c02fb55956c7d316"
-  instance_type = "t3.micro"
+  # checkov:skip=CKV2_AWS_41:Instance lab tidak memanggil API AWS sehingga belum butuh instance profile
+  ami                    = "ami-0c02fb55956c7d316"
+  instance_type          = "t3.micro"
+  vpc_security_group_ids = [aws_security_group.web.id]
+  monitoring             = true
+  ebs_optimized          = true
 
   root_block_device {
     encrypted   = true
